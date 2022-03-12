@@ -20,3 +20,6 @@ Depends:
     doSNOW,
     tidyverse
 RoxygenNote: 7.1.2
+Imports: 
+    hmlasso,
+    checkmate

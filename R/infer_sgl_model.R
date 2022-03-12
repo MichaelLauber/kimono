@@ -1,3 +1,58 @@
+train_kimono_lasso <- function(x, y, method){
+  
+  y <- scale(y)
+  x <- scale(as.matrix(x))
+  
+  n <- length(y)
+  nfolds <- 5
+  foldid1 <- sample(rep(1:nfolds, (n %/% nfolds)), replace=FALSE)
+  foldid2 <- sample(1:nfolds, (n %% nfolds), replace=FALSE)
+  foldid <- c(foldid1, foldid2)
+  
+  cv_fit <- list()
+  switch(method,
+         lasso_mean={
+           
+           cv_fit <- hmlasso::cv.hmlasso(x, y, lambda=c(1:5),
+                                         foldid=foldid, impute_method="mean",
+                                         direct_prediction=FALSE, positify="mean")
+         },
+         lasso_coco={
+           cv_fit <- hmlasso::cv.hmlasso(x, y,lambda=c(1:5),
+                                         foldid=foldid, direct_prediction=TRUE,
+                                         positify="admm_max", weight_power = 0)
+         },
+         lasso_hm={
+           cv_fit <- hmlasso::cv.hmlasso(x, y, lambda=c(1:5),
+                                         foldid=foldid, direct_prediction=TRUE,
+                                         positify="admm_frob", weight_power = 1)
+         }
+  )
+  
+  beta <- cv_fit$fit$beta[, cv_fit$lambda.min.index]
+  
+  pred <- predict(cv_fit$fit, x)
+  
+  y_hat <- x %*% beta
+  
+  r_squared <- calc_r_square(y, y_hat )
+  
+  mse <- calc_mse(y,y_hat)
+  
+  covariates  <- rownames(cv_fit$fit$beta)
+  
+  prefix_covariates <- parsing_name(covariates)
+  
+  tibble("predictor" = prefix_covariates$id,
+         "value" = beta,
+         "r_squared" = r_squared,
+         "mse" = mse,
+         "predictor_layer" = prefix_covariates$prefix
+  )
+}
+
+
+
 
 #' @rdname kimono  Calculate tau based on frobenius norm
 #' @keywords internal

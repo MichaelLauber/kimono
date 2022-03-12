@@ -10,7 +10,9 @@
 #' @param scdata - if it is sc data
 #' @param saveintermediate - saveintermediate
 #' @return a network in form of an edge table
-infer_network <- function(input_data, prior_network,  min_features = 2, sel_iterations = 0, core = 1, specific_layer = NULL, prior_missing, scdata=FALSE, saveintermediate = FALSE, ...) {
+infer_network <- function(input_data, prior_network,  min_features = 2, sel_iterations = 0, core = 1,
+                          specific_layer = NULL, prior_missing, scdata=FALSE, saveintermediate = FALSE,
+                          sgl= TRUE, method , .. ) {
 
   #get all features within the prior network
   node_names <- V(prior_network)$name
@@ -49,7 +51,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
   cl <- makeCluster(core)
   registerDoSNOW(cl)
   result <- foreach(node_name = node_names, .combine = 'rbind', .packages = 'kimono', .options.snow=opts)  %dopar% {
-  #result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
+  #    result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
 
     subnet <- NULL
     var_list <- NULL
@@ -63,13 +65,15 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
     if(sum(dim(var_list$y))==0)
       return()
 
-
-    #remove na and scale data
-    if(scdata){
-      var_list <- preprocess_scdata(var_list$y,var_list$x)
-    }else{
-      var_list <- preprocess_data(var_list$y,var_list$x)
+    if(method == "sgl"){
+      #remove na and scale data
+      if(scdata){
+        var_list <- preprocess_scdata(var_list$y,var_list$x)
+      }else{
+        var_list <- preprocess_data(var_list$y,var_list$x)
+      }
     }
+    #browser()
 
     #if not enough features stop here
     if(!is_valid(var_list$x,min_features))
@@ -81,8 +85,66 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
         if(sel_iterations != 0){
           subnet <- stability_selection( var_list$y, var_list$x, sel_iterations )
         }
-        else{
+        else if (method == "sgl"){
           subnet <- train_kimono_sgl(var_list$y, var_list$x )
+        } else {
+          
+          #subnet <- train_kimono_lasso(x = var_list$x, y = var_list$y,  method = method)
+          y = var_list$y
+          x = var_list$x
+          
+          x <- x[which(!is.na(y)), , drop = FALSE]
+          y <- y[which(!is.na(y)), drop = FALSE]
+          
+          y <- scale(y)
+          x <- scale(as.matrix(x))
+          
+          nlambdas <- 50
+          cv <- 5
+          
+          n <- length(y)
+          nfolds <- cv
+          foldid1 <- sample(rep(1:nfolds, (n %/% nfolds)), replace=FALSE)
+          foldid2 <- sample(1:nfolds, (n %% nfolds), replace=FALSE)
+          foldid <- c(foldid1, foldid2)
+          
+          cv_fit <- list()
+          switch(method,
+                 lasso_coco={
+                   cv_fit <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
+                                                 foldid=foldid, direct_prediction=TRUE,
+                                                 positify="admm_max", weight_power = 0)
+                 },
+                 lasso_hm={
+                   cv_fit <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
+                                                 foldid=foldid, direct_prediction=TRUE,
+                                                 positify="admm_frob", weight_power = 1)
+                 }
+          )
+          
+          beta <- cv_fit$fit$beta[, cv_fit$lambda.min.index]
+          
+          pred <- predict(cv_fit$fit, x)
+          
+          y_hat <- x %*% beta
+          
+          r_squared <- calc_r_square(y, y_hat )
+          
+          mse <- calc_mse(y,y_hat)
+          
+          covariates  <- rownames(cv_fit$fit$beta)
+          
+          prefix_covariates <- parsing_name(covariates)
+          
+          subnet <- tibble("predictor" = prefix_covariates$id,
+                 "value" = beta,
+                 "r_squared" = r_squared,
+                 "mse" = mse,
+                 "predictor_layer" = prefix_covariates$prefix
+          )
+          
+          
+          
         }
         FALSE
       },
@@ -131,8 +193,11 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
 #' @return a network in form of an edge table
 #' @export
 
-kimono <- function(input_data, prior_network, min_features = 2, sel_iterations = 0 , core = 1, specific_layer = NULL, scdata=FALSE, infer_missing_prior = FALSE, saveintermediate = FALSE, ...){
-
+kimono <- function(input_data, prior_network, min_features = 2, sel_iterations = 0 , core = 1, specific_layer = NULL, scdata=FALSE, infer_missing_prior = FALSE, 
+                   saveintermediate = FALSE, method = "sgl",   ...){
+  
+  checkmate::assertChoice(method, c("sgl", "lasso_coco", "lasso_hm"))
+  
   time <- Sys.time()
   #cat('run started at : ' , as.character(Sys.time()),'\n')
   cat('1) input data:\nlayer - samples - features - prior features\n')
@@ -155,7 +220,8 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
 
   cat('\n')
   cat('2) inference:\n for layers ',layer_prior,'\n')
-  result <- infer_network(input_data, prior_network,  min_features, sel_iterations , core, specific_layer, prior_missing = layer_prior_missing, scdata, saveintermediate )
+  result <- infer_network(input_data, prior_network,  min_features, sel_iterations , core, specific_layer, prior_missing = layer_prior_missing, 
+                          scdata, saveintermediate, method = method, ...)
 
   cat('\n')
   if ( nrow(result) == 0) {
@@ -174,17 +240,18 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
         features <- names(input_data[[layer_of_interest]])
 
         features <- features %>%
-                    combn(2)%>%
-                    t %>%
-                    data.table
+          combn(2)%>%
+          t %>%
+          data.table
 
         prior_fully_connected <- load_mapping(features,c(layer_of_interest,layer_of_interest)) %>% create_prior_network()
-        intra_map <- infer_network(input_data, prior_fully_connected,  min_features , sel_iterations , core, specific_layer = layer_of_interest, prior_missing = layer_prior_missing, saveintermediate  )
+        intra_map <- infer_network(input_data, prior_fully_connected,  min_features , sel_iterations , core, specific_layer = layer_of_interest, 
+                                   prior_missing = layer_prior_missing, saveintermediate, method = method  )
         cat('\n')
 
         intra_map <- intra_map %>%
-                         filter(.[[3]] != 0 ) %>%  #filter edge effect size = 0
-                         filter(predictor != '(Intercept)') #filter intercepts and intercept only models
+          filter(.[[3]] != 0 ) %>%  #filter edge effect size = 0
+          filter(predictor != '(Intercept)') #filter intercepts and intercept only models
 
 
         idx_col <- c('target','predictor','target_layer','predictor_layer')
@@ -194,7 +261,7 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
 
       cat('overall layer\n')
       idx_row <- (result$predictor != '(Intercept)' | result[,3] != 0 ) &
-                  result$predictor_layer %in% layer_of_interest
+        result$predictor_layer %in% layer_of_interest
 
       idx_col <- c('target','predictor','target_layer','predictor_layer')
 
@@ -203,7 +270,8 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
 
       prior_network_new <- create_prior_network(rbind(tmp,intra_map))
 
-      tmp <- infer_network(input_data, prior_network_new,  min_features , sel_iterations , core, specific_layer = layer_of_interest, prior_missing = layer_prior_missing, saveintermediate  )
+      tmp <- infer_network(input_data, prior_network_new,  min_features , sel_iterations , core, specific_layer = layer_of_interest, 
+                           prior_missing = layer_prior_missing, saveintermediate, method = method  )
       cat('\n')
       result <- rbind(result,tmp)
     }
@@ -215,5 +283,4 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
 
   result
 }
-
 
