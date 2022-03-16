@@ -1,3 +1,92 @@
+#' Title
+#'
+#' @param y data.table - feature to predict
+#' @param X data.table - input features with prior names attached to features
+#' @param model string - which model to train. currently only sparse group lasso tested
+#' @param cv nr of folds for cv
+#' @param nlambdas nr of lambda paramters to be tested
+#' @return edge list for a given input y and x
+train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50){
+
+  nlambdas <- nlambdas
+  cv <- cv
+
+  x <- x[which(!is.na(y)), , drop = FALSE]
+  y <- y[which(!is.na(y)), drop = FALSE]
+
+  y <- scale(y)
+  x <- scale(as.matrix(x))
+
+  n <- length(y)
+  nfolds <- cv
+  foldid1 <- sample(rep(1:nfolds, (n %/% nfolds)), replace=FALSE)
+  foldid2 <- sample(1:nfolds, (n %% nfolds), replace=FALSE)
+  foldid <- c(foldid1, foldid2)
+
+  weight_powers <- c(0, 0.5, 1, 1.5, 2)
+
+  if(method == "lasso_coco"){weight_powers <- c(0)}
+
+  fits <- vector("list", length= length(weight_powers))
+  MSEs <- vector("numeric", length= length(weight_powers))
+  for(i in seq_along(weight_powers)){
+    switch(method,
+           lasso_coco={
+             fits[[i]] <- hmlasso::cv.hmlasso(x, y,nlambda=nlambdas, lambda.min.ratio=1e-1,
+                                              foldid=foldid, direct_prediction=TRUE,
+                                              positify="admm_max", weight_power = weight_powers[i])
+           },
+           lasso_hm={
+             fits[[i]] <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
+                                              foldid=foldid, direct_prediction=TRUE,
+                                              positify="admm_frob", weight_power = weight_powers[i])
+           },
+           lasso_BDcoco={
+             fits[[i]] <- BDcocolasso::coco(x,y,n=dim(x)[1],p=dim(x)[2],p1=dim(x)[2],p2=0,
+                                            step=nlambdas, K=2*nfolds, tau=NULL,
+                                            noise="missing", block= TRUE, penalty= "lasso")
+           }
+    )
+    if (method=="lasso_BDcoco"){
+      beta <- fits[[i]]$beta.opt
+      y_hat <- x%*% beta
+      MSEs[i] <- calc_mse(y,y_hat)
+    }else{
+      beta <- fits[[i]]$fit$beta[, fits[[i]]$lambda.min.index]
+      y_hat <- x %*% beta
+      MSEs[i]<- calc_mse(y,y_hat)
+    }
+  }
+
+  if(method=="lasso_BDcoco"){
+    cv_fit <- fits[[which.min(MSEs)]]
+    beta <- cv_fit$beta.opt
+    y_hat <- x %*% beta
+    mse <- calc_mse(y,y_hat)
+    r_squared <- calc_r_square(y,y_hat)
+    covariates <- rownames(cv_fit$beta)
+  }else{
+    cv_fit <-  fits[[which.min(MSEs)]]
+    beta <- cv_fit$fit$beta[, cv_fit$lambda.min.index]
+    y_hat <- x %*% beta
+    mse <- calc_mse(y,y_hat)
+    pred <- predict(cv_fit$fit, x)
+    r_squared <- calc_r_square(y, y_hat )
+    covariates  <- rownames(cv_fit$fit$beta)
+  }
+
+  prefix_covariates <- parsing_name(covariates)
+
+  subnet <- tibble("predictor" = prefix_covariates$id,
+                   "value" = beta,
+                   "r_squared" = r_squared,
+                   "mse" = mse,
+                   "predictor_layer" = prefix_covariates$prefix
+  )
+}
+
+
+
 
 #' @rdname kimono  Calculate tau based on frobenius norm
 #' @keywords internal
