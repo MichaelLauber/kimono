@@ -7,8 +7,8 @@
 #' @param nlambdas nr of lambda paramters to be tested
 #'
 #' @return edge list for a given input y and x
-train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50){
-  
+train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50, selection= "lambda.min.index"){
+  # selection="lambda.1se.index"
   nlambdas <- nlambdas
   cv <- cv
   
@@ -44,24 +44,29 @@ train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50){
            }
     )
     
-    beta <- fits[[i]]$fit$beta[, fits[[i]]$lambda.min.index]
+    beta <- fits[[i]]$fit$beta[, fits[[i]][selection][[1]]  ]
     y_hat <- x %*% beta
     MSEs[i]<- calc_mse(y,y_hat)
   }
   
   cv_fit <-  fits[[which.min(MSEs)]]
-  beta <- cv_fit$fit$beta[, cv_fit$lambda.min.index]
-  y_hat <- x %*% beta
+  beta <- cv_fit$fit$beta[, cv_fit[selection][[1]] ]
+  
+  if(!any(beta != 0)) return(c())
+  
+  intercept <- cv_fit$fit$a0[, cv_fit[selection][[1]] ]
+  
+  y_hat <- (x %*% beta) + intercept
   mse <- calc_mse(y,y_hat)
-  pred <- predict(cv_fit$fit, x)
+  #pred <- predict(cv_fit$fit, x)
   r_squared <- calc_r_square(y, y_hat )
   
-  covariates  <- rownames(cv_fit$fit$beta)
+  covariates  <- c("(Intercept)", rownames(cv_fit$fit$beta))
   
   prefix_covariates <- parsing_name(covariates)
   
   subnet <- tibble("predictor" = prefix_covariates$id,
-                   "value" = beta,
+                   "value" = c(intercept, beta),
                    "r_squared" = r_squared,
                    "mse" = mse,
                    "predictor_layer" = prefix_covariates$prefix
