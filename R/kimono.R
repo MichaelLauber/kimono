@@ -51,7 +51,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
   cl <- makeCluster(core)
   registerDoSNOW(cl)
   result <- foreach(node_name = node_names, .combine = 'rbind', .packages = 'kimono', .options.snow=opts)  %dopar% {
-  #    result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
+    #    result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
 
     subnet <- NULL
     var_list <- NULL
@@ -140,7 +140,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
 kimono <- function(input_data, prior_network, min_features = 2, sel_iterations = 0 , core = 1, specific_layer = NULL, scdata=FALSE, infer_missing_prior = FALSE,
                    saveintermediate = FALSE, method = "sgl",   ...){
 
-  checkmate::assertChoice(method, c("sgl", "lasso_coco", "lasso_hm", "lasso_BDcoco"))
+  checkmate::assertChoice(method, c("sgl", "lasso_coco", "lasso_hm"))
 
   time <- Sys.time()
   #cat('run started at : ' , as.character(Sys.time()),'\n')
@@ -227,4 +227,3 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
 
   result
 }
-
