@@ -1,77 +1,152 @@
 #' Title
 #'
-#' @param y data.table - feature to predict
-#' @param X data.table - input features with prior names attached to features
-#' @param model string - which model to train. currently only sparse group lasso tested
-#' @param cv nr of folds for cv
+#' @param y data.table/data.frame - feature to predict
 #' @param nlambdas nr of lambda paramters to be tested
+#' @param x data.table/data.frame  - input features with prior names attached to features
+#' @param method string - model to train: either "lasso_coco" or "lasso_hm"
+#' @param folds_cv nr of folds for cv
+#' @param selection either "lambda.min.index" or "lambda.1se.index"
 #'
 #' @return edge list for a given input y and x
-train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50, selection= "lambda.min.index"){
-  # selection="lambda.1se.index"
-  nlambdas <- nlambdas
-  cv <- cv
+
+train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv = 1234, nlambdas= 50, selection= "lambda.min.index", rm_underpowered = FALSE){
   
   x <- x[which(!is.na(y)), , drop = FALSE]
   y <- y[which(!is.na(y)), drop = FALSE]
   
   y <- scale(y)
   x <- scale(as.matrix(x))
-
-  n <- length(y)
-  nfolds <- cv
-  foldid1 <- sample(rep(1:nfolds, (n %/% nfolds)), replace=FALSE)
-  foldid2 <- sample(1:nfolds, (n %% nfolds), replace=FALSE)
-  foldid <- c(foldid1, foldid2)
   
-  weight_powers <- c(0, 0.5, 1, 1.5, 2)
+  if(ncol(x) < 3) # in case we exclude all features return empty list
+    return(c()) 
   
-  if(method == "lasso_coco"){weight_powers <- c(0)}
+  if(rm_underpowered){
+    x <- rm_underpowered_feat(x, folds_cv=folds_cv)
+  } 
   
-  fits <- vector("list", length= length(weight_powers))
-  MSEs <- vector("numeric", length= length(weight_powers))
-  for(i in seq_along(weight_powers)){
-    switch(method,
-           lasso_coco={
-             fits[[i]] <- hmlasso::cv.hmlasso(x, y,nlambda=nlambdas, lambda.min.ratio=1e-1,
-                                              foldid=foldid, direct_prediction=TRUE,
-                                              positify="admm_max", weight_power = weight_powers[i])
-           },
-           lasso_hm={
-             fits[[i]] <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
-                                              foldid=foldid, direct_prediction=TRUE,
-                                              positify="admm_frob", weight_power = weight_powers[i])
-           }
-    )
-    
-    beta <- fits[[i]]$fit$beta[, fits[[i]][selection][[1]]  ]
-    y_hat <- x %*% beta
-    MSEs[i]<- calc_mse(y,y_hat)
+  fold_idx <- sample(rep( 1:folds_cv, length.out = nrow(x))) 
+  
+  if(method == "lasso_coco") {
+    cv_fit <- run_coco(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+  } else if (method == "lasso_hm") {
+    cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+  } else {
+    stop("method has to be either lasso_coco or laso_hm")
   }
   
-  cv_fit <-  fits[[which.min(MSEs)]]
   beta <- cv_fit$fit$beta[, cv_fit[selection][[1]] ]
-  
   if(!any(beta != 0)) return(c())
+  
+  y_hat <- predict(cv_fit$fit, x)[, cv_fit[selection][[1]] ]
+  
+  mse <- calc_mse(y,y_hat)
   
   intercept <- cv_fit$fit$a0[, cv_fit[selection][[1]] ]
   
-  y_hat <- (x %*% beta) + intercept
-  mse <- calc_mse(y,y_hat)
-  #pred <- predict(cv_fit$fit, x)
   r_squared <- calc_r_square(y, y_hat )
   
   covariates  <- c("(Intercept)", rownames(cv_fit$fit$beta))
   
   prefix_covariates <- parsing_name(covariates)
   
-  subnet <- tibble("predictor" = prefix_covariates$id,
-                   "value" = c(intercept, beta),
-                   "r_squared" = r_squared,
-                   "mse" = mse,
-                   "predictor_layer" = prefix_covariates$prefix
+  tibble("predictor" = prefix_covariates$id,
+         "value" = c(intercept, beta),
+         "r_squared" = r_squared,
+         "mse" = mse,
+         "predictor_layer" = prefix_covariates$prefix
   )
   
+}  
+
+
+
+
+#' Title
+#'
+#' @param x 
+#' @param y 
+#' @param nlambdas 
+#' @param fold_idx 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_coco <-  function(x,y, nlambdas, fold_idx){
+  cv_fit <- hmlasso::cv.hmlasso(x, y,nlambda=50, lambda.min.ratio=1e-1,
+                      foldid=fold_idx, direct_prediction=TRUE,
+                      positify="admm_max", weight_power = 0)
+  return(cv_fit)
+}
+
+#' Title
+#'
+#' @param x 
+#' @param y 
+#' @param nlambdas 
+#' @param fold_idx 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_hm <- function(x,y, nlambdas, fold_idx){
+  
+  weight_powers <- c(0.5, 1, 1.5, 2)
+  fits <- vector("list", length= length(weight_powers))
+  MSEs <- vector("numeric", length= length(weight_powers))
+  
+  for(i in seq_along(weight_powers)){
+    fits[[i]] <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
+                                     foldid=fold_idx, direct_prediction=TRUE,
+                                     positify="admm_frob", weight_power = weight_powers[i])
+  }
+  
+  y_hat <- predict(fits[[i]]$fit, x)[, fits[[i]]$lambda.min.index]
+  MSEs[i]<- calc_mse(y,y_hat)
+  
+  return(fits[[which.min(MSEs)]])
+}
+
+
+#' Title
+#'
+#' @param x 
+#' @param folds_cv 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+rm_underpowered_feat <- function(x, folds_cv=5){
+  
+  resample <- TRUE
+  while(resample){
+    
+    if(ncol(x) < 2) # in case we exclude all features return empty list
+      return(list())  
+    
+    set.seed(seed_cv) # set seed to reproduce cv folds
+    fold_idx <- sample(rep(1:folds_cv, length.out = nrow(x)))  
+    
+    for (fold in 1:folds_cv) {
+      
+      test_x  <- x[which(fold_idx == fold), ]
+      train_x <- x[which(fold_idx != fold), ]
+      
+      #remove underpowered features by testing the variance in training and test set
+      underpowered <- is_underpowered( test_x) |  is_underpowered( train_x)
+      
+      x <- x[ , !underpowered, drop=FALSE]
+      
+      if( any( underpowered ))
+        break
+      
+    }
+    #stop loop if no features got removed without error
+    resample <- ifelse(ncol(x) == ncol(train_x),  FALSE, TRUE)       
+  }
+  return (x)
 }
 
 
@@ -135,7 +210,7 @@ parse_prior_groups <- function(names, sep="\\___"){
 #' @return vector of bool
 #' @export
 is_underpowered <- function(x){
-  apply( x , 2, var) == 0
+  apply( x , 2, var, na.rm=TRUE) == 0
 }
 
 #' @rdname kimono  detects non informative features
@@ -196,7 +271,7 @@ calc_cv_sgl <- function(y, x, model = "sparse.grp.lasso", intercept = TRUE, seed
       train_y <- y[which(fold_idx != fold)]
 
       #remove underpowered features by testing the variance in training and test set
-      underpowered <- is_underpowered( test_x) |  is_underpowered( train_x)
+          underpowered <- is_underpowered( test_x) |  is_underpowered( train_x)
 
       x <- x[ , !underpowered, with=FALSE ]
 
