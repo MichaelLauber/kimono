@@ -12,7 +12,7 @@
 #' @return a network in form of an edge table
 infer_network <- function(input_data, prior_network,  min_features = 2, sel_iterations = 0, core = 1,
                           specific_layer = NULL, prior_missing, scdata=FALSE, saveintermediate = FALSE,
-                          sgl= TRUE, method , .. ) {
+                          method , ... ) {
 
   #get all features within the prior network
   node_names <- V(prior_network)$name
@@ -70,10 +70,11 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
       if(scdata){
         var_list <- preprocess_scdata(var_list$y,var_list$x)
       }else{
+        
         var_list <- preprocess_data(var_list$y,var_list$x)
       }
     }
-    #browser()
+    
 
     #if not enough features stop here
     if(!is_valid(var_list$x,min_features))
@@ -88,6 +89,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
         else if (method == "sgl"){
           subnet <- train_kimono_sgl(var_list$y, var_list$x )
         } else {
+          #browser()
           subnet <- train_kimono_lasso(x = var_list$x, y = var_list$y,  method = method)
         }
         FALSE
@@ -166,9 +168,14 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
   cat('2) inference:\n for layers ',layer_prior,'\n')
   result <- infer_network(input_data, prior_network,  min_features, sel_iterations , core, specific_layer, prior_missing = layer_prior_missing, 
                           scdata, saveintermediate, method = method, ...)
-
+  
   cat('\n')
-  if ( nrow(result) == 0) {
+  if ( is.null(result) ) {
+    warning('KiMONo was not able to infer any associations')
+    return(c())
+  }
+  
+  if ( nrow(result) == 0  ) {
     warning('KiMONo was not able to infer any associations')
     return(c())
   }
