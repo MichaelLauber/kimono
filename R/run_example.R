@@ -25,3 +25,6 @@ prior_network <- create_prior_network(rbind(gene_proteome,gene_gene) ) ## prior 
 network1 <- kimono(input_data, prior_network ,core = 1, infer_missing_prior = TRUE,  method = "lasso_coco")
 network2 <- kimono(input_data, prior_network ,core = 1, infer_missing_prior = TRUE,  method = "lasso_hm")
 network3 <- kimono(input_data, prior_network ,core = 1, infer_missing_prior = TRUE,  method = "lasso_BDcoco")
+input <- load("D:\\data\\data\\230222_single_omics_benchmark.RData")
+input_data$phenotype
+trace(kimono,edit = TRUE)

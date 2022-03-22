@@ -3,13 +3,13 @@
 #' @param y data.table - feature to predict
 #' @param X data.table - input features with prior names attached to features
 #' @param model string - which model to train. currently only sparse group lasso tested
-#' @param cv nr of folds for cv
+#' @param folds_cv nr of folds for cv
 #' @param nlambdas nr of lambda paramters to be tested
+#' @param selection either "lambda.min.index" or "lambda.1se.index"
+#'
 #' @return edge list for a given input y and x
-train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50, selection= "lambda.min.index"){
-  # selection="lambda.1se.index"
-  nlambdas <- nlambdas
-  cv <- cv
+
+train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambdas= 50, selection= "lambda.min.index", rm_underpowered = FALSE){
 
   x <- x[which(!is.na(y)), , drop = FALSE]
   y <- y[which(!is.na(y)), drop = FALSE]
@@ -17,65 +17,48 @@ train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50, selection= "l
   y <- scale(y)
   x <- scale(as.matrix(x))
 
-  n <- length(y)
-  nfolds <- cv
-  foldid1 <- sample(rep(1:nfolds, (n %/% nfolds)), replace=FALSE)
-  foldid2 <- sample(1:nfolds, (n %% nfolds), replace=FALSE)
-  foldid <- c(foldid1, foldid2)
+  if(ncol(x) < 3) # in case we exclude all features return empty list
+    return(c())
 
-  weight_powers <- c(0, 0.5, 1, 1.5, 2)
-
-  if(method == "lasso_coco"){weight_powers <- c(0)}
-
-  fits <- vector("list", length= length(weight_powers))
-  MSEs <- vector("numeric", length= length(weight_powers))
-  for(i in seq_along(weight_powers)){
-    switch(method,
-           lasso_coco={
-             fits[[i]] <- hmlasso::cv.hmlasso(x, y,nlambda=nlambdas, lambda.min.ratio=1e-1,
-                                              foldid=foldid, direct_prediction=TRUE,
-                                              positify="admm_max", weight_power = weight_powers[i])
-           },
-           lasso_hm={
-             fits[[i]] <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
-                                              foldid=foldid, direct_prediction=TRUE,
-                                              positify="admm_frob", weight_power = weight_powers[i])
-           },
-           lasso_BDcoco={
-             fits[[i]] <- BDcocolasso::coco(x,y,n=dim(x)[1],p=dim(x)[2],p1=dim(x)[2],p2=0,
-                                            step=nlambdas, K=2*nfolds, tau=NULL,
-                                            noise="missing", block= TRUE, penalty= "lasso")
-           }
-    )
-    if (method=="lasso_BDcoco"){
-      beta <- fits[[i]]$beta.opt
-      y_hat <- x%*% beta
-      MSEs[i] <- calc_mse(y,y_hat)
-    }else{
-      beta <- fits[[i]]$fit$beta[, fits[[i]][selection][[1]]  ]
-      y_hat <- x %*% beta
-      MSEs[i]<- calc_mse(y,y_hat)
-    }
+  if(rm_underpowered){
+    x <- rm_underpowered_feat(x, folds_cv=folds_cv)
   }
 
-  if(method=="lasso_BDcoco"){
-    cv_fit <- fits[[which.min(MSEs)]]
-    beta <- cv_fit$beta.opt
-    y_hat <- x %*% beta
-    mse <- calc_mse(y,y_hat)
-    r_squared <- calc_r_square(y,y_hat)
-    covariates <- rownames(cv_fit$beta)
-  }else{
-    cv_fit <-  fits[[which.min(MSEs)]]
-    beta <- cv_fit$fit$beta[, cv_fit[selection][[1]] ]
+  fold_idx <- sample(rep( 1:folds_cv, length.out = nrow(x)))
 
+  if(method == "lasso_coco") {
+    cv_fit <- run_coco(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+  } else if (method == "lasso_hm") {
+    cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+  } else if (method == "lasso_BDcoco")
+    cv_fit <- run_BDcoco(x,y,nlambdas=nlambdas, fold_idx = fold_idx)
+  else {
+    stop("method has to be lasso_coco, lasso_BDcoco or laso_hm")
+  }
+
+  if (method=="lasso_BDcoco"){
+    beta <- cv_fit$beta.opt
     if(!any(beta != 0)) return(c())
 
-    intercept <- cv_fit$fit$a0[, cv_fit[selection][[1]] ]
-    y_hat <- (x %*% beta) + intercept
+    y_hat <- x%*% beta
+
     mse <- calc_mse(y,y_hat)
-    #pred <- predict(cv_fit$fit, x)
+    r_squared <- calc_r_square(y,y_hat)
+    covariates <- c("(Intercept)", rownames(cv_fit$beta))
+  }
+  else{
+
+    beta <- fits[[i]]$fit$beta[, fits[[i]][selection][[1]]  ]
+    if(!any(beta != 0)) return(c())
+
+    y_hat <- predict(cv_fit$fit, x)[, cv_fit[selection][[1]] ]
+
+    mse <- calc_mse(y,y_hat)
+
+    intercept <- cv_fit$fit$a0[, cv_fit[selection][[1]] ]
+
     r_squared <- calc_r_square(y, y_hat )
+
     covariates  <- c("(Intercept)", rownames(cv_fit$fit$beta))
   }
 
@@ -88,6 +71,72 @@ train_kimono_lasso <- function(x, y, method, cv = 5, nlambdas= 50, selection= "l
                    "predictor_layer" = prefix_covariates$prefix,
   )
 }
+
+#' Title
+#'
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_BDcoco <- function(x,y, nlambdas, fold_idx){
+  cv_fit <- BDcocolasso::coco(x,y,n=dim(x)[1],p=dim(x)[2],p1=dim(x)[2],p2=0,
+                                 step=nlambdas, K=2*fold_idx, tau=NULL,
+                                 noise="missing", block= TRUE, penalty= "lasso")
+  return(cv_fit)
+}
+
+#' Title
+#'
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_coco <-  function(x,y, nlambdas, fold_idx){
+  cv_fit <- hmlasso::cv.hmlasso(x, y,nlambda=50, lambda.min.ratio=1e-1,
+                                foldid=fold_idx, direct_prediction=TRUE,
+                                positify="admm_max", weight_power = 0)
+  return(cv_fit)
+}
+
+#' Title
+#'
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_hm <- function(x,y, nlambdas, fold_idx){
+
+  weight_powers <- c(0.5, 1, 1.5, 2)
+  fits <- vector("list", length= length(weight_powers))
+  MSEs <- vector("numeric", length= length(weight_powers))
+
+  for(i in seq_along(weight_powers)){
+    fits[[i]] <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
+                                     foldid=fold_idx, direct_prediction=TRUE,
+                                     positify="admm_frob", weight_power = weight_powers[i])
+  }
+
+  y_hat <- predict(fits[[i]]$fit, x)[, fits[[i]]$lambda.min.index]
+  MSEs[i]<- calc_mse(y,y_hat)
+
+  return(fits[[which.min(MSEs)]])
+}
+
 
 
 

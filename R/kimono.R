@@ -88,6 +88,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
         else if (method == "sgl"){
           subnet <- train_kimono_sgl(var_list$y, var_list$x )
         } else {
+          #browser()
           subnet <- train_kimono_lasso(x = var_list$x, y = var_list$y,  method = method)
         }
         FALSE
@@ -140,7 +141,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
 kimono <- function(input_data, prior_network, min_features = 2, sel_iterations = 0 , core = 1, specific_layer = NULL, scdata=FALSE, infer_missing_prior = FALSE,
                    saveintermediate = FALSE, method = "sgl",   ...){
 
-  checkmate::assertChoice(method, c("sgl", "lasso_coco", "lasso_hm"))
+  checkmate::assertChoice(method, c("sgl", "lasso_coco", "lasso_hm", "lasso_BDcoco"))
 
   time <- Sys.time()
   #cat('run started at : ' , as.character(Sys.time()),'\n')
@@ -168,6 +169,12 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
                           scdata, saveintermediate, method = method, ...)
 
   cat('\n')
+  cat('\n')
+  if ( is.null(result) ) {
+    warning('KiMONo was not able to infer any associations')
+    return(c())
+  }
+
   if ( nrow(result) == 0) {
     warning('KiMONo was not able to infer any associations')
     return(c())
