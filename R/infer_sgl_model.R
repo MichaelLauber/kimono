@@ -33,7 +33,7 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
   } else if (method == "lasso_hm") {
     cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
   } else if (method == "lasso_BDcoco"){
-    cv_fit <- run_BDcoco(x,y,nlambdas=nlambdas, fold_idx = fold_idx)
+    cv_fit <- run_BDcoco(x,y,nlambdas=nlambdas)
   } else {
     stop("method has to be lasso_coco, lasso_BDcoco or lasso_hm")
   }
@@ -84,10 +84,10 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 #' @export
 #'
 #' @examples
-run_BDcoco <- function(x,y, nlambdas, fold_idx){
+run_BDcoco <- function(x,y, nlambdas){
   browser()
   cv_fit <- BDcocolasso::coco(Z = x,y = y,n=dim(x)[1],p=dim(x)[2],p1=1,p2=dim(x)[2]-1,
-                                 step=nlambdas, K=c(length(fold_idx)), tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
+                                 step=nlambdas, K=4, tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
                                  noise="missing", block= TRUE, penalty= "lasso", mode = "HM")
   return(cv_fit)
 }
