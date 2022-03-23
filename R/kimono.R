@@ -50,8 +50,8 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
   #TODO: check if number of features are too many for inference
   cl <- makeCluster(core)
   registerDoSNOW(cl)
-  result <- foreach(node_name = node_names, .combine = 'rbind', .packages = 'kimono', .options.snow=opts)  %dopar% {
-    #    result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
+  #result <- foreach(node_name = node_names, .combine = 'rbind', .packages = 'kimono', .options.snow=opts)  %dopar% {
+       result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
 
     subnet <- NULL
     var_list <- NULL
@@ -80,6 +80,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
       return()
 
     #run model in case the model bugs out catch it
+    #browser()
     possible_error <- tryCatch(
       {
         if(sel_iterations != 0){

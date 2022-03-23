@@ -14,6 +14,8 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
   x <- x[which(!is.na(y)), , drop = FALSE]
   y <- y[which(!is.na(y)), drop = FALSE]
 
+  #if (method == "lasso_BDcoco"){y<- as.matrix(y)}
+  #else{y <- scale(y)}
   y <- scale(y)
   x <- scale(as.matrix(x))
 
@@ -30,10 +32,10 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
     cv_fit <- run_coco(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
   } else if (method == "lasso_hm") {
     cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
-  } else if (method == "lasso_BDcoco")
+  } else if (method == "lasso_BDcoco"){
     cv_fit <- run_BDcoco(x,y,nlambdas=nlambdas, fold_idx = fold_idx)
-  else {
-    stop("method has to be lasso_coco, lasso_BDcoco or laso_hm")
+  } else {
+    stop("method has to be lasso_coco, lasso_BDcoco or lasso_hm")
   }
 
   if (method=="lasso_BDcoco"){
@@ -44,11 +46,10 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 
     mse <- calc_mse(y,y_hat)
     r_squared <- calc_r_square(y,y_hat)
-    covariates <- c("(Intercept)", rownames(cv_fit$beta))
-  }
-  else{
+    covariates <- c("(Intercept)", rownames(cv_fit$vnames))
+  }else{
 
-    beta <- fits[[i]]$fit$beta[, fits[[i]][selection][[1]]  ]
+    beta <- cv_fit$fit$beta[,cv_fit[selection][[1]]  ]
     if(!any(beta != 0)) return(c())
 
     y_hat <- predict(cv_fit$fit, x)[, cv_fit[selection][[1]] ]
@@ -64,11 +65,11 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 
   prefix_covariates <- parsing_name(covariates)
 
-  subnet <- tibble("predictor" = prefix_covariates$id,
-                   "value" = c(intercept, beta),
-                   "r_squared" = r_squared,
-                   "mse" = mse,
-                   "predictor_layer" = prefix_covariates$prefix,
+  tibble("predictor" = prefix_covariates$id,
+         "value" = c(intercept, beta),
+         "r_squared" = r_squared,
+         "mse" = mse,
+         "predictor_layer" = prefix_covariates$prefix,
   )
 }
 
@@ -84,9 +85,10 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 #'
 #' @examples
 run_BDcoco <- function(x,y, nlambdas, fold_idx){
-  cv_fit <- BDcocolasso::coco(x,y,n=dim(x)[1],p=dim(x)[2],p1=dim(x)[2],p2=0,
-                                 step=nlambdas, K=2*fold_idx, tau=NULL,
-                                 noise="missing", block= TRUE, penalty= "lasso")
+  browser()
+  cv_fit <- BDcocolasso::coco(Z = x,y = y,n=dim(x)[1],p=dim(x)[2],p1=1,p2=dim(x)[2]-1,
+                                 step=nlambdas, K=c(length(fold_idx)), tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
+                                 noise="missing", block= TRUE, penalty= "lasso", mode = "HM")
   return(cv_fit)
 }
 
