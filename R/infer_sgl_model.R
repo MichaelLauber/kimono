@@ -14,10 +14,10 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
   x <- x[which(!is.na(y)), , drop = FALSE]
   y <- y[which(!is.na(y)), drop = FALSE]
 
-  #if (method == "lasso_BDcoco"){y<- as.matrix(y)}
-  #else{y <- scale(y)}
   y <- scale(y)
   x <- scale(as.matrix(x))
+  if (method == "lasso_BDcoco"){x<- cbind(rep(1,nrow(x)),x)
+  colnames(x)[1]<- "(Intercept)"}
 
   if(ncol(x) < 3) # in case we exclude all features return empty list
     return(c())
@@ -38,19 +38,18 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
     stop("method has to be lasso_coco, lasso_BDcoco or lasso_hm")
   }
 
-  if (method=="lasso_BDcoco"){
+  if(method == "lasso_BDcoco"){
     beta <- cv_fit$beta.opt
-    if(!any(beta != 0)) return(c())
-
+    if(!any(beta != 0)){ return(c())}
     y_hat <- x%*% beta
-
     mse <- calc_mse(y,y_hat)
     r_squared <- calc_r_square(y,y_hat)
-    covariates <- c("(Intercept)", rownames(cv_fit$vnames))
-  }else{
+    covariates <- cv_fit$vnames
+    value <- beta
+  } else{
 
     beta <- cv_fit$fit$beta[,cv_fit[selection][[1]]  ]
-    if(!any(beta != 0)) return(c())
+    if(!any(beta != 0)){ return(c())}
 
     y_hat <- predict(cv_fit$fit, x)[, cv_fit[selection][[1]] ]
 
@@ -61,12 +60,13 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
     r_squared <- calc_r_square(y, y_hat )
 
     covariates  <- c("(Intercept)", rownames(cv_fit$fit$beta))
+    value <- c(intercept, beta)
   }
 
   prefix_covariates <- parsing_name(covariates)
 
   tibble("predictor" = prefix_covariates$id,
-         "value" = c(intercept, beta),
+         "value" = value,
          "r_squared" = r_squared,
          "mse" = mse,
          "predictor_layer" = prefix_covariates$prefix,
@@ -85,10 +85,10 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 #'
 #' @examples
 run_BDcoco <- function(x,y, nlambdas){
-  browser()
-  cv_fit <- BDcocolasso::coco(Z = x,y = y,n=dim(x)[1],p=dim(x)[2],p1=1,p2=dim(x)[2]-1,
-                                 step=nlambdas, K=4, tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
-                                 noise="missing", block= TRUE, penalty= "lasso", mode = "HM")
+  #browser()
+  cv_fit <- BDcocolasso::coco(Z = x,y = y,n=dim(x)[1],p=dim(x)[2],p1=dim(x)[2]%/%2+1,p2=dim(x)[2]%/%2,
+                                step=nlambdas, K=5,tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
+                                noise="missing", block= TRUE, penalty= "lasso", mode = "HM")
   return(cv_fit)
 }
 
