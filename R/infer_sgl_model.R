@@ -16,8 +16,6 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 
   y <- scale(y)
   x <- scale(as.matrix(x))
-  if (method == "lasso_BDcoco"){x<- cbind(rep(1,nrow(x)),x)
-  colnames(x)[1]<- "(Intercept)"}
 
   if(ncol(x) < 3) # in case we exclude all features return empty list
     return(c())
@@ -28,25 +26,38 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 
   fold_idx <- sample(rep( 1:folds_cv, length.out = nrow(x)))
 
+  set.seed(seed_cv)
+
   if(method == "lasso_coco") {
     cv_fit <- run_coco(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
   } else if (method == "lasso_hm") {
     cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
   } else if (method == "lasso_BDcoco"){
-    cv_fit <- run_BDcoco(x,y,nlambdas=nlambdas)
+    #browser()
+    res_coco <- run_BDcoco(x,y,nlambdas=nlambdas)
+    cv_fit <- res_coco$cv_fit
+    x <-   res_coco$xnew
   } else {
     stop("method has to be lasso_coco, lasso_BDcoco or lasso_hm")
   }
 
   if(method == "lasso_BDcoco"){
+
     beta <- cv_fit$beta.opt
+
     if(!any(beta != 0)){ return(c())}
+
     y_hat <- x%*% beta
+
     mse <- calc_mse(y,y_hat)
+
     r_squared <- calc_r_square(y,y_hat)
+
     covariates <- cv_fit$vnames
+
     value <- beta
-  } else{
+
+    } else {
 
     beta <- cv_fit$fit$beta[,cv_fit[selection][[1]]  ]
     if(!any(beta != 0)){ return(c())}
@@ -85,11 +96,34 @@ train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambda
 #'
 #' @examples
 run_BDcoco <- function(x,y, nlambdas){
-  #browser()
-  cv_fit <- BDcocolasso::coco(Z = x,y = y,n=dim(x)[1],p=dim(x)[2],p1=dim(x)[2]%/%2+1,p2=dim(x)[2]%/%2,
-                                step=nlambdas, K=5,tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
-                                noise="missing", block= TRUE, penalty= "lasso", mode = "HM")
-  return(cv_fit)
+  phenotype_cols <- grep("phenotype___", colnames(x))
+
+  if(length(phenotype_cols) < 1) return(list())
+
+  x <- cbind(x[,phenotype_cols, drop=FALSE], x[,-phenotype_cols, drop= FALSE])
+
+  nr_uncorrupted <- length(phenotype_cols) +1 # adding one for intercept
+  nr_corrupted <- dim(x)[2]-length(phenotype_cols)
+
+  x <- cbind(rep(1,nrow(x)),x)
+  colnames(x)[1]<- "(Intercept)"
+
+  k <- NULL
+
+  for(i in c(10:3)){
+    if(dim(x)[1]%%i == 0 ) {
+      k <- i
+      break()
+    }
+  }
+
+  if(is.null(k)) stop("Bug of BDCoCo: sample number needs to have a devivder between 10 and 3")
+
+  cv_fit <- BDcocolasso::coco(Z = x, y = y, n=dim(x)[1], p=dim(x)[2], p1=nr_uncorrupted, p2=nr_corrupted,
+                              step = nlambdas, K=k,tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
+                              noise="missing", block= TRUE, penalty= "lasso", mode = "ADMM")
+
+  return(list(cv_fit=cv_fit, xnew= x))
 }
 
 #' Title

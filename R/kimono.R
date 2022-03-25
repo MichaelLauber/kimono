@@ -50,8 +50,8 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
   #TODO: check if number of features are too many for inference
   cl <- makeCluster(core)
   registerDoSNOW(cl)
-  #result <- foreach(node_name = node_names, .combine = 'rbind', .packages = 'kimono', .options.snow=opts)  %dopar% {
-       result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
+   result <- foreach(node_name = node_names, .combine = 'rbind', .packages = 'kimono', .options.snow=opts)  %dopar% {
+  #     result <- foreach(node_name = node_names, .combine = 'rbind') %do% {
 
     subnet <- NULL
     var_list <- NULL
@@ -143,6 +143,14 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
                    saveintermediate = FALSE, method = "sgl",   ...){
 
   checkmate::assertChoice(method, c("sgl", "lasso_coco", "lasso_hm", "lasso_BDcoco"))
+
+  if(method == "lasso_BDcoco"){
+    if(dim(input_data$phenotype)[2] < 1){
+      stop("BDCocoLasso needs at least two uncorrupted phenotype features")
+    } else {
+      warning("BDCocoLasso assumes the phenotype features are uncorrupted")
+    }
+  }
 
   time <- Sys.time()
   #cat('run started at : ' , as.character(Sys.time()),'\n')
