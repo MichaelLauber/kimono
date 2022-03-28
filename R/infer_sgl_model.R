@@ -9,142 +9,142 @@
 #'
 #' @return edge list for a given input y and x
 
-train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv = 1234, nlambdas= 50, selection= "lambda.min.index", rm_underpowered = FALSE){
-  
+train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv, nlambdas= 50, selection= "lambda.min.index", rm_underpowered = FALSE){
+
   x <- x[which(!is.na(y)), , drop = FALSE]
   y <- y[which(!is.na(y)), drop = FALSE]
-  
+
   y <- scale(y)
   x <- scale(as.matrix(x))
-  
+
   if(ncol(x) < 3) # in case we exclude all features return empty list
-    return(c()) 
-  
+    return(c())
+
   if(rm_underpowered){
     x <- rm_underpowered_feat(x, folds_cv=folds_cv)
-  } 
-  
-  fold_idx <- sample(rep( 1:folds_cv, length.out = nrow(x))) 
-  
+  }
+
+  fold_idx <- sample(rep( 1:folds_cv, length.out = nrow(x)))
+
   if(method == "lasso_coco") {
-    cv_fit <- run_coco(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+    cv_fit <- run_coco(x,y, nlambdas=nlambdas, fold_idx=fold_idx, seed = seed_cv)
   } else if (method == "lasso_hm") {
-    cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+    cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx, seed = seed_cv)
   } else {
     stop("method has to be either lasso_coco or laso_hm")
   }
-  
+
   beta <- cv_fit$fit$beta[, cv_fit[selection][[1]] ]
   if(!any(beta != 0)) return(c())
-  
+
   y_hat <- predict(cv_fit$fit, x)[, cv_fit[selection][[1]] ]
-  
+
   mse <- calc_mse(y,y_hat)
-  
+
   intercept <- cv_fit$fit$a0[, cv_fit[selection][[1]] ]
-  
+
   r_squared <- calc_r_square(y, y_hat )
-  
+
   covariates  <- c("(Intercept)", rownames(cv_fit$fit$beta))
-  
+
   prefix_covariates <- parsing_name(covariates)
-  
+
   tibble("predictor" = prefix_covariates$id,
          "value" = c(intercept, beta),
          "r_squared" = r_squared,
          "mse" = mse,
          "predictor_layer" = prefix_covariates$prefix
   )
-  
-}  
+
+}
 
 
 
 
 #' Title
 #'
-#' @param x 
-#' @param y 
-#' @param nlambdas 
-#' @param fold_idx 
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
 #'
 #' @return
 #' @export
 #'
 #' @examples
-run_coco <-  function(x,y, nlambdas, fold_idx){
+run_coco <-  function(x,y, nlambdas, fold_idx, seed_cv = 0){
   cv_fit <- hmlasso::cv.hmlasso(x, y,nlambda=50, lambda.min.ratio=1e-1,
                       foldid=fold_idx, direct_prediction=TRUE,
-                      positify="admm_max", weight_power = 0)
+                      positify="admm_max", weight_power = 0, seed = seed_cv)
   return(cv_fit)
 }
 
 #' Title
 #'
-#' @param x 
-#' @param y 
-#' @param nlambdas 
-#' @param fold_idx 
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
 #'
 #' @return
 #' @export
 #'
 #' @examples
-run_hm <- function(x,y, nlambdas, fold_idx){
-  
+run_hm <- function(x,y, nlambdas, fold_idx, seed_cv = 0){
+
   weight_powers <- c(0.5, 1, 1.5, 2)
   fits <- vector("list", length= length(weight_powers))
   MSEs <- vector("numeric", length= length(weight_powers))
-  
+
   for(i in seq_along(weight_powers)){
     fits[[i]] <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
                                      foldid=fold_idx, direct_prediction=TRUE,
-                                     positify="admm_frob", weight_power = weight_powers[i])
+                                     positify="admm_frob", weight_power = weight_powers[i], seed = seed_cv)
   }
-  
+
   y_hat <- predict(fits[[i]]$fit, x)[, fits[[i]]$lambda.min.index]
   MSEs[i]<- calc_mse(y,y_hat)
-  
+
   return(fits[[which.min(MSEs)]])
 }
 
 
 #' Title
 #'
-#' @param x 
-#' @param folds_cv 
+#' @param x
+#' @param folds_cv
 #'
 #' @return
 #' @export
 #'
 #' @examples
 rm_underpowered_feat <- function(x, folds_cv=5){
-  
+
   resample <- TRUE
   while(resample){
-    
+
     if(ncol(x) < 2) # in case we exclude all features return empty list
-      return(list())  
-    
+      return(list())
+
     set.seed(seed_cv) # set seed to reproduce cv folds
-    fold_idx <- sample(rep(1:folds_cv, length.out = nrow(x)))  
-    
+    fold_idx <- sample(rep(1:folds_cv, length.out = nrow(x)))
+
     for (fold in 1:folds_cv) {
-      
+
       test_x  <- x[which(fold_idx == fold), ]
       train_x <- x[which(fold_idx != fold), ]
-      
+
       #remove underpowered features by testing the variance in training and test set
       underpowered <- is_underpowered( test_x) |  is_underpowered( train_x)
-      
+
       x <- x[ , !underpowered, drop=FALSE]
-      
+
       if( any( underpowered ))
         break
-      
+
     }
     #stop loop if no features got removed without error
-    resample <- ifelse(ncol(x) == ncol(train_x),  FALSE, TRUE)       
+    resample <- ifelse(ncol(x) == ncol(train_x),  FALSE, TRUE)
   }
   return (x)
 }

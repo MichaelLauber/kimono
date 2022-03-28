@@ -12,7 +12,7 @@
 #' @return a network in form of an edge table
 infer_network <- function(input_data, prior_network,  min_features = 2, sel_iterations = 0, core = 1,
                           specific_layer = NULL, prior_missing, scdata=FALSE, saveintermediate = FALSE,
-                          method , ... ) {
+                          method , seed,  ... ) {
 
   #get all features within the prior network
   node_names <- V(prior_network)$name
@@ -70,11 +70,11 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
       if(scdata){
         var_list <- preprocess_scdata(var_list$y,var_list$x)
       }else{
-        
+
         var_list <- preprocess_data(var_list$y,var_list$x)
       }
     }
-    
+
 
     #if not enough features stop here
     if(!is_valid(var_list$x,min_features))
@@ -90,7 +90,7 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
           subnet <- train_kimono_sgl(var_list$y, var_list$x )
         } else {
           #browser()
-          subnet <- train_kimono_lasso(x = var_list$x, y = var_list$y,  method = method)
+          subnet <- train_kimono_lasso(x = var_list$x, y = var_list$y,  method = method, seed_cv = seed)
         }
         FALSE
       },
@@ -139,11 +139,11 @@ infer_network <- function(input_data, prior_network,  min_features = 2, sel_iter
 #' @return a network in form of an edge table
 #' @export
 
-kimono <- function(input_data, prior_network, min_features = 2, sel_iterations = 0 , core = 1, specific_layer = NULL, scdata=FALSE, infer_missing_prior = FALSE, 
-                   saveintermediate = FALSE, method = "sgl",   ...){
-  
+kimono <- function(input_data, prior_network, min_features = 2, sel_iterations = 0 , core = 1, specific_layer = NULL, scdata=FALSE, infer_missing_prior = FALSE,
+                   saveintermediate = FALSE, method = "sgl",  seed = 1234, ...){
+
   checkmate::assertChoice(method, c("sgl", "lasso_coco", "lasso_hm"))
-  
+
   time <- Sys.time()
   #cat('run started at : ' , as.character(Sys.time()),'\n')
   cat('1) input data:\nlayer - samples - features - prior features\n')
@@ -166,15 +166,15 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
 
   cat('\n')
   cat('2) inference:\n for layers ',layer_prior,'\n')
-  result <- infer_network(input_data, prior_network,  min_features, sel_iterations , core, specific_layer, prior_missing = layer_prior_missing, 
-                          scdata, saveintermediate, method = method, ...)
-  
+  result <- infer_network(input_data, prior_network,  min_features, sel_iterations , core, specific_layer, prior_missing = layer_prior_missing,
+                          scdata, saveintermediate, method = method, seed = seed,...)
+
   cat('\n')
   if ( is.null(result) ) {
     warning('KiMONo was not able to infer any associations')
     return(c())
   }
-  
+
   if ( nrow(result) == 0  ) {
     warning('KiMONo was not able to infer any associations')
     return(c())
@@ -196,7 +196,7 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
           data.table
 
         prior_fully_connected <- load_mapping(features,c(layer_of_interest,layer_of_interest)) %>% create_prior_network()
-        intra_map <- infer_network(input_data, prior_fully_connected,  min_features , sel_iterations , core, specific_layer = layer_of_interest, 
+        intra_map <- infer_network(input_data, prior_fully_connected,  min_features , sel_iterations , core, specific_layer = layer_of_interest,
                                    prior_missing = layer_prior_missing, saveintermediate, method = method  )
         cat('\n')
 
@@ -221,7 +221,7 @@ kimono <- function(input_data, prior_network, min_features = 2, sel_iterations =
 
       prior_network_new <- create_prior_network(rbind(tmp,intra_map))
 
-      tmp <- infer_network(input_data, prior_network_new,  min_features , sel_iterations , core, specific_layer = layer_of_interest, 
+      tmp <- infer_network(input_data, prior_network_new,  min_features , sel_iterations , core, specific_layer = layer_of_interest,
                            prior_missing = layer_prior_missing, saveintermediate, method = method  )
       cat('\n')
       result <- rbind(result,tmp)
