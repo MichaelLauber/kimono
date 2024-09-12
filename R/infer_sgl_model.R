@@ -1,3 +1,181 @@
+#' Title
+#'
+#' @param y data.table - feature to predict
+#' @param X data.table - input features with prior names attached to features
+#' @param model string - which model to train. currently only sparse group lasso tested
+#' @param folds_cv nr of folds for cv
+#' @param nlambdas nr of lambda paramters to be tested
+#' @param selection either "lambda.min.index" or "lambda.1se.index"
+#'
+#' @return edge list for a given input y and x
+
+train_kimono_lasso <- function(x, y, method, folds_cv = 5, seed_cv=1234, nlambdas= 50, selection= "lambda.min.index", rm_underpowered = FALSE){
+
+  x <- x[which(!is.na(y)), , drop = FALSE]
+  y <- y[which(!is.na(y)), drop = FALSE]
+
+  y <- scale(y)
+  x <- scale(as.matrix(x))
+
+  if(ncol(x) < 3) # in case we exclude all features return empty list
+    return(c())
+
+  if(rm_underpowered){
+    x <- rm_underpowered_feat(x, folds_cv=folds_cv)
+  }
+
+  fold_idx <- sample(rep( 1:folds_cv, length.out = nrow(x)))
+
+  set.seed(seed_cv)
+
+  if(method == "lasso_coco") {
+    cv_fit <- run_coco(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+  } else if (method == "lasso_hm") {
+    cv_fit <- run_hm(x,y, nlambdas=nlambdas, fold_idx=fold_idx)
+  } else if (method == "lasso_BDcoco"){
+    #browser()
+    res_coco <- run_BDcoco(x,y,nlambdas=nlambdas)
+    cv_fit <- res_coco$cv_fit
+    x <-   res_coco$xnew
+  } else {
+    stop("method has to be lasso_coco, lasso_BDcoco or lasso_hm")
+  }
+
+  if(method == "lasso_BDcoco"){
+
+    beta <- cv_fit$beta.opt
+
+    if(!any(beta != 0)){ return(c())}
+
+    y_hat <- x%*% beta
+
+    mse <- calc_mse(y,y_hat)
+
+    r_squared <- calc_r_square(y,y_hat)
+
+    covariates <- cv_fit$vnames
+
+    value <- beta
+
+    } else {
+
+    beta <- cv_fit$fit$beta[,cv_fit[selection][[1]]  ]
+    if(!any(beta != 0)){ return(c())}
+
+    y_hat <- predict(cv_fit$fit, x)[, cv_fit[selection][[1]] ]
+
+    mse <- calc_mse(y,y_hat)
+
+    intercept <- cv_fit$fit$a0[, cv_fit[selection][[1]] ]
+
+    r_squared <- calc_r_square(y, y_hat )
+
+    covariates  <- c("(Intercept)", rownames(cv_fit$fit$beta))
+    value <- c(intercept, beta)
+  }
+
+  prefix_covariates <- parsing_name(covariates)
+
+  tibble("predictor" = prefix_covariates$id,
+         "value" = value,
+         "r_squared" = r_squared,
+         "mse" = mse,
+         "predictor_layer" = prefix_covariates$prefix,
+  )
+}
+
+#' Title
+#'
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_BDcoco <- function(x,y, nlambdas){
+  phenotype_cols <- grep("phenotype___", colnames(x))
+
+  if(length(phenotype_cols) < 1) return(list())
+
+  x <- cbind(x[,phenotype_cols, drop=FALSE], x[,-phenotype_cols, drop= FALSE])
+
+  nr_uncorrupted <- length(phenotype_cols) +1 # adding one for intercept
+  nr_corrupted <- dim(x)[2]-length(phenotype_cols)
+
+  x <- cbind(rep(1,nrow(x)),x)
+  colnames(x)[1]<- "(Intercept)"
+
+  k <- NULL
+
+  for(i in c(10:3)){
+    if(dim(x)[1]%%i == 0 ) {
+      k <- i
+      break()
+    }
+  }
+
+  if(is.null(k)) stop("Bug of BDCoCo: sample number needs to have a devivder between 10 and 3")
+
+  cv_fit <- BDcocolasso::coco(Z = x, y = y, n=dim(x)[1], p=dim(x)[2], p1=nr_uncorrupted, p2=nr_corrupted,
+                              step = nlambdas, K=k,tau=NULL, etol = 1e-4, mu = 10, center.y = FALSE,
+                              noise="missing", block= TRUE, penalty= "lasso", mode = "ADMM")
+
+  return(list(cv_fit=cv_fit, xnew= x))
+}
+
+#' Title
+#'
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_coco <-  function(x,y, nlambdas, fold_idx){
+  cv_fit <- hmlasso::cv.hmlasso(x, y,nlambda=50, lambda.min.ratio=1e-1,
+                                foldid=fold_idx, direct_prediction=TRUE,
+                                positify="admm_max", weight_power = 0)
+  return(cv_fit)
+}
+
+#' Title
+#'
+#' @param x
+#' @param y
+#' @param nlambdas
+#' @param fold_idx
+#'
+#' @return
+#' @export
+#'
+#' @examples
+run_hm <- function(x,y, nlambdas, fold_idx){
+
+  weight_powers <- c(0.5, 1, 1.5, 2)
+  fits <- vector("list", length= length(weight_powers))
+  MSEs <- vector("numeric", length= length(weight_powers))
+
+  for(i in seq_along(weight_powers)){
+    fits[[i]] <- hmlasso::cv.hmlasso(x, y, nlambda=nlambdas, lambda.min.ratio=1e-1,
+                                     foldid=fold_idx, direct_prediction=TRUE,
+                                     positify="admm_frob", weight_power = weight_powers[i])
+  }
+
+  y_hat <- predict(fits[[i]]$fit, x)[, fits[[i]]$lambda.min.index]
+  MSEs[i]<- calc_mse(y,y_hat)
+
+  return(fits[[which.min(MSEs)]])
+}
+
+
+
+
 
 #' @rdname kimono  Calculate tau based on frobenius norm
 #' @keywords internal
